@@ -271,6 +271,7 @@ class DeepQPLayer(QPlayer):
         max_q_values = [i if i != -999.0 else 0 for i in max_q_values]
         target = [q * self.gamma + r for q,r in zip(max_q_values,self.reward_history)]
 
+        #TODO Force it to learn invalid states as 0 
         target = np.array([max(i,-1.0) if i < 0 else min(i,1.0) for i in target]).reshape(-1,1) # Clamp target values between -1 and 1
 
         print(f'Max Target: {max(target.flatten())}')
@@ -285,6 +286,7 @@ class DeepQPLayer(QPlayer):
         # return super().loadPolicy(file)
         self.q_network = tf.keras.models.load_model(file)
         self.q_prime_network = tf.keras.models.load_model(file)
+        print(f'{self.name} Loaded Q and Q Prime networks from file {file}')
     def reset(self):
         # raise NotImplementedError("Player class is virtual, please inherent from it")
         self.action_reasoning.clear()
@@ -432,14 +434,15 @@ class Board:
             self.reset()
            
 
-    def play_agents(self,verbose=True):
-        
+    def play_agents(self,verbose=True,return_boards = False):
+        past_board_states = []
         while self.check_win() == 0 and self.check_win() is not None:
             valid_actions = self.get_valid_moves()
             if verbose == 2 and isinstance(self.p1,QPlayer):
                 print(self.p1.show_q_function(self.board))
             p1_action = self.p1.choose_action(valid_actions=valid_actions,board=self.board)
             self.place(p1_action,player_symbol=self.p1.player_symbol)
+            past_board_states.append(self.board.copy())
             if verbose:
                 print(self)
             if self.check_win() == self.p1.player_symbol:
@@ -456,6 +459,7 @@ class Board:
                     print(self.p2.show_q_function(self.board))
                 p2_action = self.p2.choose_action(valid_actions=valid_actions,board=self.board)
                 self.place(p2_action,player_symbol=self.p2.player_symbol)
+                past_board_states.append(self.board.copy())
 
                 if verbose:
                     print(self)
@@ -465,30 +469,36 @@ class Board:
                         print(f"Player {self.p2.player_symbol} Wins!")
                     return self.p2.player_symbol
 
-        return self.check_win()
+        if return_boards:
+            return past_board_states
+        else:
+            return self.check_win()
 
 
 
 if __name__ == "__main__":
     def custom_cooling(eps,itr):
-        if itr < 100000 :
+        if itr < 250000 :
             return eps
-        elif itr < 200000 :
+        elif itr < 500000 :
             return eps / 2.0
-        elif itr < 300000 :
+        elif itr < 750000 :
             return eps / 4.0
         else:
             return eps / 8.0
     
-    q1 = DeepQPLayer(player_symbol=1,name='q_1_cooling_deep',epsilon=0.5)
+    q1 = DeepQPLayer(player_symbol=1,name='q_1_cooling_deep_v2',epsilon=0.5)
     # q1 = QPlayer(player_symbol=-1,name='q_1_cooling')
     q2 = QPlayer(player_symbol=-1,name='q_2_cooling')
+    r2 = RandomPlayer(player_symbol = -1)
 
-    b = Board(q1,q2,num_rows=4,num_cols=4,cooling_func=custom_cooling)
+    q1.loadPolicy('q_network_q_1_cooling_deep')
+
+    b = Board(q1,r2,num_rows=4,num_cols=4,cooling_func=custom_cooling)
 
     b.reset()
     q1.reset()
     q2.reset()
-    b.train_agents(n_iterations=400000,verbose=0,train_iterations=2500,copy_iterations=10000)
+    b.train_agents(n_iterations=1000000,verbose=0,train_iterations=2500,copy_iterations=10000)
     q1.savePolicy()
     q2.savePolicy()
