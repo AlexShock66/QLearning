@@ -154,7 +154,7 @@ class QPlayer(BasePlayer):
 
 
 
-class DeepQPLayer(QPlayer):
+class DeepQPlayer(QPlayer):
     def __init__(self, player_symbol, epsilon=0.5, gamma=0.5, alpha=0.4, name='Q_player',network=None) -> None:
         super().__init__(player_symbol, epsilon, gamma, alpha, name)
         # self.q_network = network.
@@ -234,6 +234,25 @@ class DeepQPLayer(QPlayer):
         self.s_prime_history.append(s_prime)
         self.reward_history.append(reward)
     
+
+    def augment_train_data(self,states:np.ndarray,actions:np.ndarray,targets:list):
+        _states = []
+        _actions = []
+        _targets = []
+        num_augmented_states = 0
+        for s,a,t in zip(states.reshape(-1,self.num_rows,self.num_cols),actions,targets):
+            _states.append(s.copy())
+            _actions.append(a)
+            _targets.append(t)
+            invalid_actions = [i for i in range(self.num_cols) if i not in get_possible_moves(s)]
+            for ia in invalid_actions:
+                _states.append(s.copy())
+                _actions.append(self.convert_action_to_1_hot(ia))
+                _targets.append(0.0)
+                num_augmented_states += 1
+        print(f'Number of states augmented: {num_augmented_states}')
+        
+        return np.array(_states).reshape(-1,self.num_rows,self.num_cols,1),np.array(_actions),_targets
     def train_network(self,epochs=10):
         states = np.array(self.board_history).reshape(-1,self.num_rows,self.num_cols,1)
         actions = np.row_stack([self.convert_action_to_1_hot(a) for a in self.action_history])
@@ -271,13 +290,20 @@ class DeepQPLayer(QPlayer):
         max_q_values = [i if i != -999.0 else 0 for i in max_q_values]
         target = [q * self.gamma + r for q,r in zip(max_q_values,self.reward_history)]
 
-        #TODO Force it to learn invalid states as 0 
-        target = np.array([max(i,-1.0) if i < 0 else min(i,1.0) for i in target]).reshape(-1,1) # Clamp target values between -1 and 1
+        states,actions,targets = self.augment_train_data(states,actions,target)
+        #TODO Force it to learn invalid states as 0
+        print(f"""
+            States Shape: {states.shape}
+            Actions Shape: {actions.shape}
+            Len targets: {len(targets)}
+            """)
+        targets = np.array([max(i,-1.0) if i < 0 else min(i,1.0) for i in targets]).reshape(-1,1) # Clamp target values between -1 and 1
 
-        print(f'Max Target: {max(target.flatten())}')
-        print(f'Min Target: {min(target.flatten())}')
+        print(f'Max Target: {max(targets.flatten())}')
+        print(f'Min Target: {min(targets.flatten())}')
+        print(f'Std Targets: {np.std(targets)}')
 
-        self.q_network.fit(x=[states,actions],y=target,epochs=epochs)
+        self.q_network.fit(x=[states,actions],y=targets,epochs=epochs)
 
     def savePolicy(self):
         self.q_network.save(f'q_network_{self.name}')
@@ -297,6 +323,48 @@ class DeepQPLayer(QPlayer):
         
         
         #NOTE: Might want to remove this to have model retrain on states that it has already seen before? Up to some max value (maybe same value that we copy model over with)
+
+class DeepQPlayerV2(DeepQPlayer):
+    def __init__(self, player_symbol, epsilon=0.5, gamma=0.5, alpha=0.4, name='Q_player', network=None) -> None:
+        super().__init__(player_symbol, epsilon, gamma, alpha, name, network)
+
+    def convert_action_to_1_hot(self, action):
+        # return super().convert_action_to_1_hot(action)
+        return [action]
+    def generate_network(self):
+        
+        EMBED_DIM = 16
+        board_input = tf.keras.layers.Input(shape=(self.num_rows,self.num_cols,1))
+        action_input = tf.keras.layers.Input(shape=(1))
+
+        board_path = tf.keras.layers.Conv2D(filters=12,kernel_size=(4,4),name='4x4_conv')(board_input)
+        board_path = tf.keras.layers.Activation('tanh')(board_path)
+        board_path = tf.keras.layers.Flatten()(board_path)
+        
+        # board_path = tf.keras.layers.concatenate([action_input,board_path])
+
+        board_path = tf.keras.layers.Dense(EMBED_DIM)(board_path)
+        action_path = tf.keras.layers.Embedding(input_dim=self.num_cols,output_dim=EMBED_DIM,name='action_encoder')(action_input)
+
+        joined_path = tf.keras.layers.Multiply()([action_path,board_path])
+
+        joined_path = tf.keras.layers.Dense(32)(joined_path)
+
+        joined_path = tf.keras.layers.Dense(1,name='1d_output')(joined_path)
+        joined_path = tf.keras.layers.Activation('tanh',name='tanh_activation')(joined_path)
+
+        model = tf.keras.Model(inputs=[board_input,action_input],outputs=joined_path)
+        model.compile(loss=tf.losses.mean_squared_error)
+        return model
+    
+    def show_q_function(self, state):
+            # return super().show_q_function(state)
+            # return np.array([self.q_network([state.reshape(1,self.num_rows,self.num_cols,1),np.array(self.convert_action_to_1_hot(a)).reshape(-1,self.num_cols)]) for a in range(self.num_cols)]).flatten()
+        states = []
+        [states.append(state.copy()) for s in range(self.num_cols)]
+        actions = np.arange(start=0,stop=self.num_cols).reshape(-1,1)
+        states = np.array(states).reshape(-1,self.num_rows,self.num_cols,1)
+        return self.q_network([states,actions]).numpy().flatten()
 
 class Board:
     def __init__(self,p1:BasePlayer,p2:BasePlayer,num_rows=7,num_cols=7,cooling_func = lambda x,y :x):
@@ -412,20 +480,20 @@ class Board:
             
 
             if i % copy_iterations == 0 and i != 0:
-                if isinstance(self.p1,DeepQPLayer):
+                if isinstance(self.p1,DeepQPlayer):
                     self.p1.copy_model_over()
-                if isinstance(self.p2,DeepQPLayer):
+                if isinstance(self.p2,DeepQPlayer):
                     self.p2.copy_model_over()
                     # self.p2.reset()
-            if not isinstance(self.p1,DeepQPLayer):
+            if not isinstance(self.p1,DeepQPlayer):
                 self.p1.reset()
-            if not isinstance(self.p2,DeepQPLayer):
+            if not isinstance(self.p2,DeepQPlayer):
                 self.p2.reset()
             if i % train_iterations == 0 and i != 0:
-                if isinstance(self.p1,DeepQPLayer):
+                if isinstance(self.p1,DeepQPlayer):
                     self.p1.train_network(epochs=training_epochs)
                     self.p1.reset()
-                if isinstance(self.p2,DeepQPLayer):
+                if isinstance(self.p2,DeepQPlayer):
                     self.p2.train_network(epochs=training_epochs)
                     self.p2.reset()
 
@@ -474,6 +542,19 @@ class Board:
         else:
             return self.check_win()
 
+def generate_random_board(num_rows=6,num_cols=7,num_moves=None):
+    r1 = RandomPlayer(player_symbol=1)
+    r2 = RandomPlayer(player_symbol=-1)
+    b = Board(r1,r2,num_rows=num_rows,num_cols=num_cols)
+    if num_moves is None:
+        b.play_agents(verbose=0)
+        return b.board
+    else:
+        for i in range(num_moves):
+            b.place(r1.choose_action(b.get_valid_moves()),r1.player_symbol)
+            b.place(r2.choose_action(b.get_valid_moves()),r2.player_symbol)
+        return b.board
+    
 
 
 if __name__ == "__main__":
@@ -487,18 +568,18 @@ if __name__ == "__main__":
         else:
             return eps / 8.0
     
-    q1 = DeepQPLayer(player_symbol=1,name='q_1_cooling_deep_v2',epsilon=0.5)
+    q1 = DeepQPlayerV2(player_symbol=1,name='qv2_1_cooling_deep',epsilon=0.5)
     # q1 = QPlayer(player_symbol=-1,name='q_1_cooling')
-    q2 = QPlayer(player_symbol=-1,name='q_2_cooling')
+    # q2 = QPlayer(player_symbol=-1,name='q_2_cooling')
     r2 = RandomPlayer(player_symbol = -1)
 
-    q1.loadPolicy('q_network_q_1_cooling_deep')
+    # q1.loadPolicy('q_network_q_1_cooling_deep_v2')
 
-    b = Board(q1,r2,num_rows=4,num_cols=4,cooling_func=custom_cooling)
+    b = Board(q1,r2,num_rows=6,num_cols=7,cooling_func=custom_cooling)
 
     b.reset()
     q1.reset()
-    q2.reset()
-    b.train_agents(n_iterations=1000000,verbose=0,train_iterations=2500,copy_iterations=10000)
+    # q2.reset()
+    b.train_agents(n_iterations=400000,verbose=0,train_iterations=2500,copy_iterations=10000)
     q1.savePolicy()
-    q2.savePolicy()
+    # q2.savePolicy()
