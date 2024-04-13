@@ -8,6 +8,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT_DATA_FOLDER = 'genuse_data/'
 
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NpEncoder, self).default(obj)
+
+
 def generate_random_board(num_rows=6,num_cols=7,num_moves=None):
     r1 = RandomPlayer(player_symbol=1)
     r2 = RandomPlayer(player_symbol=-1)
@@ -80,8 +91,8 @@ def write_random_board(num_pieces,num_rows,num_cols):
             return
     with open(brd_str,'w') as fp:
         targets = get_targets_for_board(brd,num_iterations=500)
-        to_json = {'targets':targets}
-        json.dump(to_json,fp)
+        to_json = {'targets':targets,'board':brd}
+        json.dump(to_json,fp,cls=NpEncoder)
     # print('Im a thread finishing')
     
 class DataGenerator:
