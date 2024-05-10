@@ -1,4 +1,5 @@
 import tensorflow as tf
+tf.config.set_visible_devices([], 'GPU')
 import numpy as np
 from tqdm.auto import tqdm
 from scipy.signal import convolve2d
@@ -545,6 +546,9 @@ class DeepQPlayer(QPlayer):
         self.training_batch_size = training_batch_size        
     def copy_model_over(self):
         self.q_prime_network.set_weights(self.q_network.get_weights())
+        self.q_prime_network.trainable = False
+        for l in self.q_prime_network.layers:
+            l.trainable = False
 
 
     def show_q_function(self, state):
@@ -727,9 +731,9 @@ class DeepQPlayer(QPlayer):
     def savePolicy(self):
         date_str = datetime.datetime.now().strftime("%m_%d_%Y:%H:%M")
 
-        self.q_network.save(os.path.join('QNetworks/',f'{date_str}_{self.name}'))
+        self.q_network.save(os.path.join('NewQNetworks/',f'{date_str}_{self.name}'))
 
-        with open(os.path.join('Histories/',f'{date_str}_{self.name}_history.json','w')) as fp:
+        with open(os.path.join('NewHistories/',f'{date_str}_{self.name}_history.json'),'w') as fp:
             json.dump(self.train_history,fp)
         print(f'Policy Saved for {self.name}')
 
@@ -747,7 +751,7 @@ class DeepQPlayer(QPlayer):
         self.reward_history.clear()
         self.s_prime_history.clear()
 
-class DeepQPlayerV2(DeepQPlayer):
+class SinglePredictionQPlayer(DeepQPlayer):
     def __init__(self, player_symbol, epsilon=0.5, gamma=0.5, alpha=0.4, name='Q_player', network=None,train_batch_size=8) -> None:
         super().__init__(player_symbol, epsilon, gamma, alpha, name, network,training_batch_size=train_batch_size)
         
@@ -757,22 +761,41 @@ class DeepQPlayerV2(DeepQPlayer):
         return [action]
     def generate_network(self):
         board_input = tf.keras.layers.Input(shape=(self.num_rows,self.num_cols,1))
-        action_input = tf.keras.layers.Input(shape=(self.num_cols))
+        action_input = tf.keras.layers.Input(shape=(1))
         
+        # board_flat = InputRemapper()(board_input)
+        # board_flat = tf.keras.layers.Flatten()(board_flat)
+
+        # action_flat = tf.keras.layers.Flatten()(action_input)
+
+        # board_path = tf.keras.layers.concatenate([board_flat,action_flat])
+        # board_path = tf.keras.layers.Dense(128,activation='relu')(board_path)
+
+        # board_path = tf.keras.layers.concatenate([board_path,action_flat,board_flat])
+        # board_path = tf.keras.layers.Dropout(0.5)(board_path)
+
+        # board_path = tf.keras.layers.Dense(64,activation='relu')(board_path)
+        # board_path = tf.keras.layers.concatenate([board_path,action_flat,board_flat])
+        # board_path = tf.keras.layers.Dropout(0.3)(board_path)
+        
+        # board_path = tf.keras.layers.Dense(32,activation='relu')(board_path)
+        # board_path = tf.keras.layers.Dropout(0.35)(board_path)
+        # joined = tf.keras.layers.Dense(1,activation='tanh')(board_path)
+        ################################################## Pre 4_18 ##################################################
         board_path = InputRemapper()(board_input)
-        board_path = tf.keras.layers.Conv2D(filters=32,kernel_size=(4,4),activation='relu',padding='same')(board_path)
+        board_path = tf.keras.layers.Conv2D(filters=32,kernel_size=(4,4),padding='same')(board_path)
         board_path = tf.keras.layers.Flatten()(board_path)
-        board_path = tf.keras.layers.Dense(128,activation='relu')(board_path)
-        embed = tf.keras.layers.Embedding(input_dim=self.num_cols,output_dim=128)(action_input)
+        board_path = tf.keras.layers.Dense(64)(board_path)
+        embed = tf.keras.layers.Embedding(input_dim=self.num_cols,output_dim=64)(action_input)
 
         joined = tf.keras.layers.multiply([embed,board_path])
 
         joined = tf.keras.layers.Dropout(0.25)(joined)
 
-        joined = tf.keras.layers.Dense(64,activation='relu')(joined)
+        joined = tf.keras.layers.Dense(64)(joined)
 
         joined = tf.keras.layers.Dense(1,activation='tanh')(joined)
-
+        ################################################## Pre 4_18 ##################################################
         model = tf.keras.Model(inputs = [board_input,action_input],outputs=joined)
         model.compile(
             loss='mse',
@@ -789,7 +812,7 @@ class DeepQPlayerV2(DeepQPlayer):
         states = np.array(states).reshape(-1,self.num_rows,self.num_cols,1)
         return self.q_network([states,actions]).numpy().flatten()
 
-class DeepQPlayerV3(DeepQPlayerV2):
+class MultiPredictionQPlayer(SinglePredictionQPlayer):
     def __init__(self, player_symbol, epsilon=0.5, gamma=0.5, alpha=0.4, name='Q_player', network=None, train_batch_size=8) -> None:
         super().__init__(player_symbol, epsilon, gamma, alpha, name, network, train_batch_size)
     
@@ -800,38 +823,25 @@ class DeepQPlayerV3(DeepQPlayerV2):
     def generate_network(self):
         # return super().generate_network()
         input = tf.keras.layers.Input(shape=(self.num_rows,self.num_cols,1))
-        input = (input + 2) / 2.0
+        
+        board_flat = InputRemapper()(input)
+        board_flat = tf.keras.layers.Flatten()(board_flat)
 
-        board_path = tf.keras.layers.Conv2D(filters=32,kernel_size=(4,4),activation='relu',padding='same')(input)
-        board_path = tf.keras.layers.Flatten()(board_path)
-        board_path = tf.keras.layers.Dense(64,activation='relu')(board_path)
-        # x = tf.keras.layers.Conv2D(filters=8,kernel_size=(4,4),padding='same',activation='tanh')(input)
-        # x = tf.keras.layers.Conv2D(filters=16,kernel_size=(2,2),padding='same')(x)
-        # x = tf.keras.layers.AveragePooling2D(pool_size=(2,2))(x)
-        # x = tf.keras.layers.Conv2D(filters=32,kernel_size=(2,2))(x)
-        # x = tf.keras.layers.Flatten()(x)
-        # x = tf.keras.layers.Dropout(0.5)(x)
-        joined = tf.keras.layers.Dropout(0.5)(board_path)
-        # joined = tf.keras.layers.Dense(64,activation='relu')(joined)
-        joined = tf.keras.layers.Dense(32,activation='relu')(joined)
-        # flat_input = tf.keras.layers.Flatten()(input)
+        board_path = tf.keras.layers.Dense(128,activation='relu')(board_flat)
+        board_path = tf.keras.layers.Dropout(0.5)(board_path)
+        board_path = tf.keras.layers.Dense(64,activation='relu')(tf.keras.layers.concatenate([board_path,board_flat]))
+        board_path = tf.keras.layers.Dropout(0.3)(board_path)
+        board_path = tf.keras.layers.Dense(32,activation='relu')(tf.keras.layers.concatenate([board_path,board_flat]))
+        ### OLD STUFF ###
+        # board_path = tf.keras.layers.Conv2D(filters=32,kernel_size=(4,4),activation='relu',padding='same')(input)
+        # board_path = tf.keras.layers.Flatten()(board_path)
+        # board_path = tf.keras.layers.Dense(64,activation='relu')(board_path)
 
-        # x = tf.keras.layers.Dense(128)(tf.keras.layers.concatenate([flat_input,x]))
-        # x = tf.keras.layers.Dropout(0.3)(x)
-        # x = tf.keras.layers.Dense(64)(tf.keras.layers.concatenate([flat_input,x]))
+        # joined = tf.keras.layers.Dropout(0.5)(board_path)
+        # joined = tf.keras.layers.Dense(32,activation='relu')(joined)
 
-        # x = tf.keras.layers.Reshape(target_shape=(6*7,1))(input)
-        # x = tf.keras.layers.multiply([x,tf.convert_to_tensor([[i + 1] for i in range(6*7)],dtype=float)])
-        # x = tf.keras.layers.Multiply()([x,tf.convert_to_tensor(np.array([[i + 1] for i in range(6*7)]),dtype=float)])
-        # x = x * [[i + 1] for i in range(42)]
-        # x = TransformerBlock(32,4,128)(x)
-        # x = TransformerBlock(32,4,128)(x)
-
-        # x = tf.keras.layers.GlobalAveragePooling1D()(x)
-
-        # x = tf.keras.layers.Dense(64)(x)
-
-        x = tf.keras.layers.Dense(self.num_cols,name=f'{self.num_cols}D_output',activation='tanh')(joined)
+        x = tf.keras.layers.Dense(self.num_cols,name=f'{self.num_cols}D_output',activation='tanh')(board_path)
+        ### OLD STUFF ###
 
         model = tf.keras.Model(inputs=input,outputs=x)
         model.compile(
@@ -843,18 +853,18 @@ class DeepQPlayerV3(DeepQPlayerV2):
     def train_network(self,epochs=5):
             states = np.array(self.board_history).reshape(-1,self.num_rows,self.num_cols,1)
             actions = np.row_stack([self.convert_action_to_1_hot(a) for a in self.action_history])
-            a_primes = []
+            # a_primes = []
             s_primes = []
-            for s in self.s_prime_history:
-                for i in range(self.num_cols):
+            # for s in self.s_prime_history:
+                # for i in range(self.num_cols):
                     # state_primes.append(np.array(get_next_board_state(s,a,self.player_symbol)))
-                    a_primes.append(self.convert_action_to_1_hot(i))
-                    s_primes.append(s.copy())
+                # a_primes.append(self.convert_action_to_1_hot(i))
+                # s_primes.append(s.copy())
             
 
             
-            a_primes = np.array(a_primes)
-            state_primes = np.array(s_primes).reshape(-1,self.num_rows,self.num_cols,1)
+            # a_primes = np.array(a_primes)
+            state_primes = np.array(self.s_prime_history).reshape(-1,self.num_rows,self.num_cols,1)
 
             batches = [(i,min(i+self.max_eval_batch_size,len(state_primes))) for i in range(0,len(state_primes),self.max_eval_batch_size)]
 
@@ -898,7 +908,8 @@ class DeepQPlayerV3(DeepQPlayerV2):
             print(f'Min Target: {min(targets.flatten())}')
             print(f'Std Targets: {np.std(targets)}')
 
-            train_hist = self.q_network.fit(x=states,y=targets,epochs=epochs,batch_size=self.training_batch_size)
+            train_states, test_states, train_targets, test_targets = train_test_split(states,targets)
+            train_hist = self.q_network.fit(x=train_states,y=train_targets,epochs=epochs,batch_size=self.training_batch_size,validation_data=(test_states,test_targets))
             new_dct:dict= train_hist.history
             if self.train_history is None:
                 self.train_history = new_dct
@@ -940,7 +951,7 @@ class DeepQPlayerV3(DeepQPlayerV2):
         return self.q_network(state.reshape(-1,self.num_rows,self.num_cols,1)).numpy().flatten()
     
 
-class TransferLearnPlayer(DeepQPlayerV2):
+class TransferLearnPlayer(SinglePredictionQPlayer):
     def __init__(self, player_symbol, epsilon=0.5, gamma=0.5, alpha=0.4, name='Q_player', network=None,model_path=None,mdl_stop_idx = 9) -> None:
         super().__init__(player_symbol, epsilon, gamma, alpha, name, network)
         if model_path is None:
@@ -1210,28 +1221,48 @@ if __name__ == "__main__":
             return 0.6
         elif itr < 75000:
             return 0.4
-        else:
+        elif itr < 100000:
             return 0.2
+        else:
+            return 0.05
 
-    q1 = DeepQPlayerV2(player_symbol=1,name='q1_Input_Mapper_vsq_small_train',epsilon=0.5,alpha=0.0,gamma=0.7,train_batch_size=128)
-    q2 = DeepQPlayerV2(player_symbol=-1,name='q2_input_mapper_vsq_small_train',epsilon=0.5,alpha=0.0,gamma=0.7,train_batch_size=128)
+    q_multi_d2rl = MultiPredictionQPlayer(player_symbol=1,name='Q_Multi_D2RL',epsilon=0.5,alpha=1.0,gamma=0.95,train_batch_size=128)
+    rand_multi_d2rl = MultiPredictionQPlayer(player_symbol=1,name='Rand_Multi_D2RL',epsilon=0.5,alpha=1.0,gamma=0.95,train_batch_size=128)
+
+    q_single_d2rl = SinglePredictionQPlayer(player_symbol=1,name='Q_Single_D2RL',epsilon=1,alpha=1.0,gamma=0.95,train_batch_size=128)
+    rand_single_d2rl = SinglePredictionQPlayer(player_symbol=1,name='Rand_Single_Encoding',epsilon=0.5,alpha=1.0,gamma=0.95,train_batch_size=128)
+
+
+    q2_multi = MultiPredictionQPlayer(player_symbol=-1,name='Q2_VS_Q_V3_D2RL',epsilon=0.5,alpha=1.0,gamma=0.95,train_batch_size=128)
+    q2_single = SinglePredictionQPlayer(player_symbol=-1,name='Q2_VS_Q_V3_D2RL',epsilon=1,alpha=1.0,gamma=0.95,train_batch_size=128)
+    # q2 = SinglePredictionQPlayer(player_symbol=-1,name='q2_input_mapper_vsq_small_train',epsilon=0.5,alpha=0.0,gamma=0.7,train_batch_size=128)
     r2 = RandomPlayer(player_symbol = -1)
     monte_2 = MonteCarloPlayer(player_symbol=-1)
 
     g2 = GreedyPlayer(player_symbol=-1)
 
-    b = Board(q1,q2,num_rows=6,num_cols=7)
+    # b = Board(q1,q2,num_rows=6,num_cols=7)
 
-    b.reset()
-    q1.reset()
-    try:
-        print(f'Training {type(b.p1)} Vs. {type(b.p2)}')
-        b.train_agents(n_iterations=750000,verbose=0,train_iterations=1000,copy_iterations=2000,training_epochs=1,alpha_cooling_func=alpha_cooling_func,reward_func=evaluate_board)
+    def write_train_board(b:Board):
+        try:
+            print(f'Training {type(b.p1)} Vs. {type(b.p2)}')
+            # b.train_agents(n_iterations=750000,verbose=0,train_iterations=1000,copy_iterations=2000,training_epochs=1,alpha_cooling_func=alpha_cooling_func,reward_func=evaluate_board) Pre 4/22
+            b.train_agents(n_iterations=200000,verbose=0,train_iterations=1000,copy_iterations=2000,training_epochs=1,reward_func=evaluate_board)
 
-    except KeyboardInterrupt as e:
-        print('Training Stoppped Early...')
-    finally:
-        q1.savePolicy()
-        q2.savePolicy()
+        except KeyboardInterrupt as e:
+            print('Training Stoppped Early...')
+        finally:
+            b.p1.savePolicy()
+
+    b1 = Board(rand_single_d2rl,q2_single,cooling_func=custom_cooling)
+    # b2 = Board(rand_multi_d2rl,r2)
+    # b3 = Board(q_single_d2rl,q2_single)
+    # b4 = Board(rand_single_d2rl,r2)
+
+    write_train_board(b1)
+    # write_train_board(b2)
+    # write_train_board(b3)
+    # write_train_board(b4)
+    
         
 

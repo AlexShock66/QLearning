@@ -1,1 +1,17 @@
-# QLearning
+# Applying Deep-Q Learning to Connect-4
+## Code Structure
+This repository is split into several components. `deepq.py` holds the main functionality for all of the Q-learning implementations, `filter_visualizer.ipynb` has funcitons to show what the convolutional encoders in the Q networks learned, `QNetworks/` contains pre-trained Q-Learning agents of varying configurations, `Histories/` contains the models' loss over time on the training and validation set, `Example_Boards/` contains 95,000 randomly generated boards that have beeen evaluated by a Monte-Carlo agent to get an estimate of the Q values, `deepq.ipynb` contains visualizations of the agents playing a game and what the predicted Q values were for any given state, and `analysis.ipynb` contains different analyses done on the different pretrained agents.
+
+We reccomend starting at the `analysis.ipynb` to gain an understanding of the evaluation methods and how to use the functions defined in `deepq.py`
+
+### `deepq.py`
+This file is the bread and butter of this project and contains all of the logic for playing agents against eachother, training agents, and creating environments for agents to play in. It is comprised of several major classes that will be discussed below:
+1. `Board`
+    - This class holds all of the information necessary for any agent that implements `BasePlayer`'s functions to play in a connect-4 environment. It has methods to train agents whether they be tabular Q or deep q and play agents against eachother for the user to see (as can be seen in `deepq.ipynb`).
+    - There are several configurations when training the agents. The number of games played in a single episode, how often Deep-Q agents copy Q` into Q, how to alter the $\alpha$ value as training goes on, how to alter $\epsilon$ for the epsilon greedy policy as training goes on, and how many total games should be played in training.
+2. `SinglePredictionQPLayer`
+    - This class is an implementation of a Deep-Q player that has a network that will take as input a state and action pair and output a single Q value for it. There are several configurations for this class when it is constructed like the initial epsilon value, the initial alpha value, the discount factor (denoted by gamma), the training batch size, the number of epochs to train on each episode, and also the tensorflow model to use when making predictions.
+3. `MultiPredictionQPlayer`
+    - This class is very similar to the `SinglePredictionQPlayer` but with the main difference being that this agent expects the underlying model to only accept a single state and output a q value for all actions. It has the same configurations as the `SinglePredictionQPlayer`.
+4. Helper Functions
+    - There are various helper functions defined in `deepq.py`. They range from gaining the transition function from state and action to new state, checking if a player has won the game, and evaluating the board with a heuristic function for the reward. They should not be imported outside of the `deepq.py` with the exception of some desinged to help the user understand what is going on inside of the game, like the `visualize()` method that will take a 2D numpy array and show it as a connect-4 board.
